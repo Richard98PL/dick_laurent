@@ -1,0 +1,15 @@
+beautifulsoup4==4.12.2
+ipython==7.34.0
+matplotlib==3.3.2
+numpy==1.21.6
+PyAudio==0.2.11
+pydub==0.25.1
+python_vlc==3.0.18122
+Requests==2.31.0
+seaborn==0.12.2
+sounddevice==0.4.6
+SoundFile==0.10.3.post1
+SpeechRecognition==3.8.1
+tensorflow==2.10.1
+wavio==0.0.7
+yt_dlp==2023.6.22

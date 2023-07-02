@@ -20,7 +20,35 @@ def geTimeDiff(indata):
      recorded_audio = np.concatenate((recorded_audio,  indata))
      return xd
 
-def audio_callback(indata, frames, timex, status, hearingEvent, listeningEvent):
+import tensorflow as tf
+seed = 42
+tf.random.set_seed(seed)
+np.random.seed(seed)
+
+def get_spectrogram(waveform):
+    # Zero-padding for an audio waveform with less than 16,000 samples.
+    input_len = 16000
+    waveform = waveform[:input_len]
+    zero_padding = tf.zeros(
+        [16000] - tf.shape(waveform),
+        dtype=tf.float32)
+    # Cast the waveform tensors' dtype to float32.
+    waveform = tf.cast(waveform, dtype=tf.float32)
+    # Concatenate the waveform with `zero_padding`, which ensures all audio
+    # clips are of the same length.
+    equal_length = tf.concat([waveform, zero_padding], 0)
+    # Convert the waveform to a spectrogram via a STFT.
+    spectrogram = tf.signal.stft(
+        equal_length, frame_length=255, frame_step=128)
+    # Obtain the magnitude of the STFT.
+    spectrogram = tf.abs(spectrogram)
+    # Add a `channels` dimension, so that the spectrogram can be used
+    # as image-like input data with convolution layers (which expect
+    # shape (`batch_size`, `height`, `width`, `channels`).
+    spectrogram = spectrogram[..., tf.newaxis]
+    return spectrogram
+
+def audio_callback(indata, frames, timex, status, hearingEvent, listeningEvent, loaded_model):
     global start_time, print_voice, recorded_audio
     #print('start indata')
     #print(indata)
@@ -44,7 +72,7 @@ def audio_callback(indata, frames, timex, status, hearingEvent, listeningEvent):
 
     elif print_voice and geTimeDiff(indata) >= min_duration:
         print('voice detected' + str(volume_norm))
-        print('kurwa' + str(time.time() - start_time))
+        print('kurwa -> ' + str(time.time() - start_time))
         print_voice = False
         listeningEvent.clear()
 
@@ -59,10 +87,35 @@ def audio_callback(indata, frames, timex, status, hearingEvent, listeningEvent):
             # Trim audio to 1 second
             recorded_audio = recorded_audio[:target_length, :]
 
+        
         wavio.write("recorded_audio.wav", recorded_audio, sample_rate, sampwidth=2)
         recorded_audio = np.empty((0, indata.shape[1]), dtype=np.float32)
+
+
+
+
+        audio = None
+        with wave.open("recorded_audio.wav", 'rb') as file:
+        # Get the parameters of the WAV file
+            params = file.getparams()
+
+            # Read the audio data from the file
+            audio_data = file.readframes(params.nframes)
+
+        # Convert the binary audio data to a NumPy array with the same format as your existing code
+            audio = np.frombuffer(audio_data, dtype=np.int16)
+            sd.play(audio, params.framerate)
+            sd.wait()
+
+        spec = preprocess_audiobuffer(audio)
+        prediction = loaded_model(spec)
+        label_pred = np.argmax(prediction, axis=1)
+        command = commands[label_pred[0]]
+        print("Predicted label:", command)
+
+
         print("Audio saved.")
-        hearingEvent.set()
+        # hearingEvent.set()
 
 
     
@@ -465,11 +518,35 @@ import pydub
     
 from multiprocessing import Process, Event
 if __name__ == '__main__':
+    import numpy as np
+
+    from tensorflow.keras import models
+
+    from recording_helper import record_audio, terminate
+    from tf_helper import preprocess_audiobuffer
+
+    import os
+
+    folder_location = 'data/mini_speech_commands'  # Replace with the actual folder location
+
+    folders = []
+
+    for xd, dirnames, filenames in os.walk(folder_location):
+        for dirname in dirnames:
+            folder_name = os.path.basename(os.path.join(xd, dirname))
+            folders.append(folder_name)
+
+    print(folders)
+
+    commands = folders
+
+    loaded_model = models.load_model("saved_model")
+
     print('im here?')
     # Start the audio input stream
     hearingEvent = Event()   
     listeningEvent = Event()
-    stream = sd.InputStream(channels=1, samplerate=sample_rate, callback=lambda indata, frames, time, status: audio_callback(indata, frames, time, status, hearingEvent, listeningEvent))
+    stream = sd.InputStream(channels=1, samplerate=sample_rate, callback=lambda indata, frames, time, status: audio_callback(indata, frames, time, status, hearingEvent, listeningEvent, loaded_model))
     stream.start()
 
    
