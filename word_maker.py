@@ -7,7 +7,7 @@ import numpy as np
 sample_rate = 16000
 duration = 0.1
 threshold = 6
-
+min_duration = 0.77
 # Set up the audio stream
 start_time = None
 print_voice = False
@@ -19,39 +19,11 @@ def geTimeDiff(indata):
      #print(xd)
      recorded_audio = np.concatenate((recorded_audio,  indata))
      return xd
-
-import tensorflow as tf
-seed = 42
-tf.random.set_seed(seed)
-np.random.seed(seed)
-
-def get_spectrogram(waveform):
-    # Zero-padding for an audio waveform with less than 16,000 samples.
-    input_len = 16000
-    waveform = waveform[:input_len]
-    zero_padding = tf.zeros(
-        [16000] - tf.shape(waveform),
-        dtype=tf.float32)
-    # Cast the waveform tensors' dtype to float32.
-    waveform = tf.cast(waveform, dtype=tf.float32)
-    # Concatenate the waveform with `zero_padding`, which ensures all audio
-    # clips are of the same length.
-    equal_length = tf.concat([waveform, zero_padding], 0)
-    # Convert the waveform to a spectrogram via a STFT.
-    spectrogram = tf.signal.stft(
-        equal_length, frame_length=255, frame_step=128)
-    # Obtain the magnitude of the STFT.
-    spectrogram = tf.abs(spectrogram)
-    # Add a `channels` dimension, so that the spectrogram can be used
-    # as image-like input data with convolution layers (which expect
-    # shape (`batch_size`, `height`, `width`, `channels`).
-    spectrogram = spectrogram[..., tf.newaxis]
-    return spectrogram
-
-min_duration = 0.25
-speech = ''
-def audio_callback(indata, frames, timex, status, hearingEvent, listeningEvent, loaded_model):
-    global start_time, print_voice, recorded_audio
+slowo = None
+def audio_callback(indata, frames, timex, status, hearingEvent, listeningEvent):
+    global start_time, print_voice, recorded_audio, slowo
+    if slowo == None or len(slowo) == 0:
+        return
     #print('start indata')
     #print(indata)
     #print('end indata')
@@ -74,7 +46,7 @@ def audio_callback(indata, frames, timex, status, hearingEvent, listeningEvent, 
 
     elif print_voice and geTimeDiff(indata) >= min_duration:
         print('voice detected' + str(volume_norm))
-        print('kurwa -> ' + str(time.time() - start_time))
+        print('kurwa' + str(time.time() - start_time))
         print_voice = False
         listeningEvent.clear()
 
@@ -89,83 +61,9 @@ def audio_callback(indata, frames, timex, status, hearingEvent, listeningEvent, 
             # Trim audio to 1 second
             recorded_audio = recorded_audio[:target_length, :]
 
-        
         wavio.write("recorded_audio.wav", recorded_audio, sample_rate, sampwidth=2)
         recorded_audio = np.empty((0, indata.shape[1]), dtype=np.float32)
-
-        with wave.open("recorded_audio.wav", 'rb') as file:
-            # Get the parameters of the WAV file
-            params = file.getparams()
-
-            # Read the audio data from the file
-            audio_data = file.readframes(params.nframes)
-
-            # Convert the binary audio data to a NumPy array
-            audio = np.frombuffer(audio_data, dtype=np.int16)
-                    
-            current_length = recorded_audio.shape[0]
-
-            target_length = 1
-            if current_length < target_length:
-                # Pad audio with empty bits to reach 1 second
-                padding = np.zeros((target_length - current_length, recorded_audio.shape[1]))
-                recorded_audio = np.concatenate((recorded_audio, padding), axis=0)
-            elif current_length > target_length:
-                # Trim audio to 1 second
-                recorded_audio = recorded_audio[:target_length, :]
-
-            spec = preprocess_audiobuffer(audio)
-            prediction = loaded_model(spec)
-            print(prediction)
-            label_pred = np.argmax(prediction, axis=1)
-            command = commands[label_pred[0]]
-
-            
-            # Get the confidence score of the prediction
-            confidence = np.max(prediction, axis=1)
-            print("Predicted command:", command)
-
-            probabilities = tf.nn.softmax(prediction)
-            label_pred = np.argmax(probabilities, axis=1)
-
-            highest_probability = np.max(probabilities)
-            highest_probability_str = "{:.2f}".format(highest_probability * 100)
-            print("Highest Probability: " +  highest_probability_str + '%')
-
-            
-            print('Other results:')
-            for probability in probabilities.numpy():
-                for p in probability:
-                    probo = "{:.2f}".format(p * 100)
-                    print("Result: " + probo + '%')
-
-            #print("Predicted label:", command)
-            if highest_probability < 0.7:
-                print('Too small probability.')
-                return
-            
-            global speech
-            speech = speech + command + ' '
-            print(speech)
-
-
-    elif start_time is not None and geTimeDiff(indata) >= min_duration *5:
         print("Audio saved.")
-        print(speech)
-
-        # Open the text file in write mode
-        with open("speech.txt", 'w') as file:
-            # Write the text to the file
-            file.write(speech)
-
-        # Print a message indicating the successful write operation
-        print("Text has been written to the file.")
-
-        print_voice = False
-        start_time = None
-        speech = ''
-
-
         hearingEvent.set()
 
 
@@ -358,8 +256,9 @@ def generate_random_name(length):
     letters = string.ascii_lowercase
     return ''.join(random.choice(letters) for _ in range(length))
 
-def listen(listeningEvent, hearingEvent):
+def listen(listeningEvent, hearingEvent, slowo):
     while True:
+        #print('e?')
         if hearingEvent is not None and hearingEvent.is_set():
             print('no i jestem tutaj')
             
@@ -374,59 +273,87 @@ def listen(listeningEvent, hearingEvent):
 
             
             try:
-                text = ''
-                with open("speech.txt", 'r') as file:
-                    # Read the contents of the file
-                    text = file.read()
+                audio_file = "recorded_audio.wav"
+                with wave.open(audio_file, "rb") as wav:
+                    # Get the number of frames in the audio file
+                    num_frames = wav.getnframes()
 
-                    # Split the text into words
-                    words = text.split()
+                    # Get the frame rate (sample rate) of the audio file
+                    frame_rate = wav.getframerate()
 
-                    # Remove duplicate words while maintaining order
-                    unique_words = []
-                    for word in words:
-                        if word not in unique_words:
-                            unique_words.append(word)
+                    # Calculate the duration of the audio file in seconds
+                    audio_length = num_frames / frame_rate
 
-                    # Join the unique words back into a string
-                    result = " ".join(unique_words)
+                print("Audio Length:", audio_length, "seconds")
+                if audio_length < 1.5:
+                    #print('continue')
+                    hearingEvent.clear()
+                    #continue
+                
+                with sr.AudioFile(audio_file) as source:
+                     recognizer = sr.Recognizer()
+                     audio = recognizer.record(source)  # Read the entire audio file
+                     #text = recognizer.recognize_google(audio, language='pl-PL')
 
-                    # Print the result
-                    print("Text with duplicates removed:")
-                    print(result)
 
+                     #print("Transcribed Text:")
+                     #print(text)
 
-                if "youtu" in str(text).lower():
+                text = 'slowo'
+                print(len(text.split(' ')))
+                if len(text.split(' ')) == 1:
                     text = text.lower()
-                    text = text.replace('włącz mi teraz', '')
-                    text = text.replace('włącz mi teraz na youtubie', '')
-                    text = text.replace('włącz mi teraz na youtube', '')
-                    text = text.replace('włącz mi teraz na youtubie proszę', '')
-                    text = text.replace('włącz mi teraz na youtube proszę', '')
-                    text = text.replace('włącz mi teraz proszę', '')
-
-                    text = text.replace('włącz mi na youtubie', '')
-                    text = text.replace('włącz mi na youtubie proszę', '')
-                    text = text.replace('włącz mi na youtube', '')
-                    text = text.replace('włącz mi na youtube proszę', '')
-                    
-                    text = text.replace('hej dick', '')
-                    text = text.replace('hej dik', '')
-                    text = text.replace('heidi', '')
-                    text = text.replace('youtube', '')
-
-                    text = text.replace("włącz mi", '')
-                    text = text.replace("a teraz", '')
-                    text = text.replace("proszę", '')
-
-                    if text.endswith("proszę"):
-                        text = text[:-len("proszę")]
-
-                    text = text.replace('  ', '')
                     text = text.strip()
+                    #print(text)
 
-                    print(text)
-                    open_first_youtube_video(text)
+                    print('zapisuje w folderze: ' + str(slowo))
+                    directory = 'data/mini_speech_commands/' + str(slowo)
+                    if not os.path.exists(directory):
+                        os.makedirs(directory)
+
+                    name = generate_random_name(10)
+
+                    file_path = os.path.join(directory, name + '.wav')
+
+                    # Specify the input WAV file path
+                    audio_file = "recorded_audio.wav"
+
+                    # Copy the file to the desired location with the autogenerated name
+                    shutil.copyfile(audio_file, file_path)
+
+                    print(f"File saved at location: {file_path}")
+
+                # if "youtu" in str(text).lower():
+                #     text = text.lower()
+                #     text = text.replace('włącz mi teraz', '')
+                #     text = text.replace('włącz mi teraz na youtubie', '')
+                #     text = text.replace('włącz mi teraz na youtube', '')
+                #     text = text.replace('włącz mi teraz na youtubie proszę', '')
+                #     text = text.replace('włącz mi teraz na youtube proszę', '')
+                #     text = text.replace('włącz mi teraz proszę', '')
+
+                #     text = text.replace('włącz mi na youtubie', '')
+                #     text = text.replace('włącz mi na youtubie proszę', '')
+                #     text = text.replace('włącz mi na youtube', '')
+                #     text = text.replace('włącz mi na youtube proszę', '')
+                    
+                #     text = text.replace('hej dick', '')
+                #     text = text.replace('hej dik', '')
+                #     text = text.replace('heidi', '')
+                #     text = text.replace('youtube', '')
+
+                #     text = text.replace("włącz mi", '')
+                #     text = text.replace("a teraz", '')
+                #     text = text.replace("proszę", '')
+
+                #     if text.endswith("proszę"):
+                #         text = text[:-len("proszę")]
+
+                #     text = text.replace('  ', '')
+                #     text = text.strip()
+
+                #     print(text)
+                #     open_first_youtube_video(text)
             except sr.UnknownValueError:
                 print("Speech recognition could not understand audio")
             except sr.RequestError as e:
@@ -541,45 +468,23 @@ import wave
 
 import pydub
 
-    
 from multiprocessing import Process, Event
 if __name__ == '__main__':
-    import numpy as np
-
-    from tensorflow.keras import models
-
-    from recording_helper import record_audio, terminate
-    from tf_helper import preprocess_audiobuffer
-
-    import os
-
-    folder_location = 'data/mini_speech_commands'  # Replace with the actual folder location
-
-    folders = []
-
-    for xd, dirnames, filenames in os.walk(folder_location):
-        for dirname in dirnames:
-            folder_name = os.path.basename(os.path.join(xd, dirname))
-            folders.append(folder_name)
-
-    print(folders)
-
-    commands = folders
-
-    loaded_model = models.load_model("saved_model")
-
-    print('im here?')
-    # Start the audio input stream
     hearingEvent = Event()   
     listeningEvent = Event()
-    stream = sd.InputStream(channels=1, samplerate=sample_rate, callback=lambda indata, frames, time, status: audio_callback(indata, frames, time, status, hearingEvent, listeningEvent, loaded_model))
+    stream = sd.InputStream(channels=1, samplerate=sample_rate, callback=lambda indata, frames, time, status: audio_callback(indata, frames, time, status, hearingEvent, listeningEvent))
     stream.start()
 
    
     hearingEvent.clear()
-    speech_thread = Process(target=listen, args=(listeningEvent, hearingEvent, ))
+
+    print('daj slowo: ')
+    slowo = input()
+
+    speech_thread = Process(target=listen, args=(listeningEvent, hearingEvent, slowo))
     speech_thread.start()
 
+    
     root.mainloop()
     while True:
         pass
