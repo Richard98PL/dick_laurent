@@ -7,7 +7,7 @@ import numpy as np
 sample_rate = 16000
 duration = 0.1
 threshold = 8
-min_duration = 0.5
+min_duration = 0.77
 # Set up the audio stream
 start_time = None
 print_voice = False
@@ -28,7 +28,7 @@ def audio_callback(indata, frames, timex, status, hearingEvent, listeningEvent):
     # print(indata)
     # print('end indata')
 
-    threshold = 2
+    threshold = 5
 
     volume_norm = np.linalg.norm(indata) * 10
     # print(volume_norm)
